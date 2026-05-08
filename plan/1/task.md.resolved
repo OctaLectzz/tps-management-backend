@@ -1,0 +1,66 @@
+# ELECTRA TPS Management — Execution Tracker
+
+## Phase 1 — Dependencies
+- [x] Install maatwebsite/excel (user already running)
+
+## Phase 2 — PHP Enums
+- [ ] PollingStationStatus
+- [ ] OfficerRole
+- [ ] OfficerStatus
+- [ ] ConfirmationStatus
+
+## Phase 3 — Migrations
+- [ ] create_districts_table
+- [ ] create_villages_table
+- [ ] create_polling_stations_table
+- [ ] create_officers_table
+- [ ] create_assignments_table
+- [ ] create_vote_results_table
+
+## Phase 4 — Models
+- [ ] District
+- [ ] Village
+- [ ] PollingStation
+- [ ] Officer
+- [ ] Assignment
+- [ ] VoteResult
+
+## Phase 5 — Factories & Seeders
+- [ ] DistrictFactory, VillageFactory, PollingStationFactory
+- [ ] OfficerFactory, AssignmentFactory, VoteResultFactory
+- [ ] DistrictSeeder
+- [ ] Update DatabaseSeeder
+
+## Phase 6 — ApiResponse Trait & Services
+- [ ] ApiResponse trait
+- [ ] PollingStationService
+- [ ] ImportService
+- [ ] DashboardService
+
+## Phase 7 — Form Requests
+- [ ] StorePollingStationRequest, UpdatePollingStationRequest, ImportPollingStationRequest
+- [ ] StoreOfficerRequest, UpdateOfficerRequest
+- [ ] StoreAssignmentRequest, UpdateAssignmentRequest
+- [ ] StoreVoteResultRequest, UpdateVoteResultRequest
+
+## Phase 8 — API Resources
+- [ ] DistrictResource, VillageResource
+- [ ] PollingStationResource, OfficerResource
+- [ ] AssignmentResource, VoteResultResource, DashboardResource
+
+## Phase 9 — Controllers
+- [ ] PollingStationController
+- [ ] DistrictController, VillageController
+- [ ] OfficerController, AssignmentController
+- [ ] VoteResultController, DashboardController
+
+## Phase 10 — Routes, Import/Export
+- [ ] api.php routes
+- [ ] PollingStationImport
+- [ ] PollingStationExport
+
+## Verification
+- [ ] migrate:fresh
+- [ ] db:seed
+- [ ] route:list
+- [ ] pint --dirty

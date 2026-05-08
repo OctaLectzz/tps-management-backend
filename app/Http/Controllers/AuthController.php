@@ -4,11 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Traits\ApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
+    use ApiResponse;
+
     public function register(Request $request)
     {
         $request->validate([
@@ -27,11 +30,10 @@ class AuthController extends Controller
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        return response()->json([
-            'access_token' => $token,
-            'token_type' => 'Bearer',
+        return $this->successResponse([
+            'token' => $token,
             'user' => new UserResource($user),
-        ], 201);
+        ], 'User registered successfully.', 201);
     }
 
     public function login(Request $request)
@@ -44,24 +46,19 @@ class AuthController extends Controller
         $user = User::where('email', $request->email)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
-            return response()->json([
-                'message' => 'Invalid credentials.',
-            ], 401);
+            return $this->errorResponse('Invalid credentials.', 401);
         }
 
         if (! $user->status) {
-            return response()->json([
-                'message' => 'Account is inactive.',
-            ], 403);
+            return $this->errorResponse('Account is inactive.', 403);
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;
 
-        return response()->json([
-            'access_token' => $token,
-            'token_type' => 'Bearer',
+        return $this->successResponse([
+            'token' => $token,
             'user' => new UserResource($user),
-        ]);
+        ], 'Successfully logged in.');
     }
 
     public function logout(Request $request)
@@ -69,14 +66,12 @@ class AuthController extends Controller
         $token = $request->user()->currentAccessToken();
         $token->delete();
 
-        return response()->json([
-            'message' => 'Successfully logged out.',
-        ]);
+        return $this->successResponse(null, 'Successfully logged out.');
     }
 
     public function profile(Request $request)
     {
-        return new UserResource($request->user());
+        return $this->successResponse(new UserResource($request->user()), 'Profile retrieved successfully.');
     }
 
     public function editprofile(Request $request)
@@ -86,6 +81,7 @@ class AuthController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|required|string|max:255',
             'email' => 'sometimes|required|string|email|max:255|unique:users,email,'.$user->id,
+            'photo' => 'nullable|string',
             'phone_number' => 'nullable|string',
             'date_of_birth' => 'nullable|date',
             'gender' => 'nullable|in:M,F',
@@ -98,7 +94,7 @@ class AuthController extends Controller
 
         $user->update($validated);
 
-        return new UserResource($user);
+        return $this->successResponse(new UserResource($user), 'Profile successfully updated.');
     }
 
     public function changepassword(Request $request)
@@ -111,17 +107,13 @@ class AuthController extends Controller
         $user = $request->user();
 
         if (! Hash::check($request->current_password, $user->password)) {
-            return response()->json([
-                'message' => 'Current password does not match.',
-            ], 400);
+            return $this->errorResponse('Current password does not match.', 400);
         }
 
         $user->update([
             'password' => Hash::make($request->password),
         ]);
 
-        return response()->json([
-            'message' => 'Password successfully updated.',
-        ]);
+        return $this->successResponse(null, 'Password successfully updated.');
     }
 }

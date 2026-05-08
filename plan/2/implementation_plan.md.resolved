@@ -1,0 +1,27 @@
+# Goal
+Replace current Eloquent queries for districts and villages with models provided by the `azishapidin/indoregion` package.
+
+## User Review Required
+[!IMPORTANT]
+The package stores region data in its own tables. Ensure migrations have been run (`php artisan migrate`) and the seeder executed (`php artisan db:seed --class=IndoRegionSeeder`). If not yet done, ask the user to run these commands.
+
+## Open Questions
+- Do you want to keep the existing `District` and `Village` models (custom) or fully replace them with the package's models?
+- Should the API responses keep the same resource shape (`DistrictResource`, `VillageResource`) or adapt to the package's models?
+
+## Proposed Changes
+---
+### DistrictController
+- Replace `use App\Models\District;` with the package model namespace (e.g., `AzisHapidin\IndoRegion\Models\District`).
+- Update queries to use the package's relationships (`villages`, `pollingStations`).
+- Adjust `load` calls accordingly.
+
+---
+### VillageController
+- Replace `use App\Models\Village;` with the package model namespace.
+- Update query building to match package relationships.
+
+## Verification Plan
+- Run `php artisan route:list` to ensure routes unchanged.
+- Use tinker or HTTP client to call the API endpoints and verify JSON structure.
+- Run Pint to format changed files.

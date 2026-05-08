@@ -1,0 +1,304 @@
+# ELECTRA TPS Management System — Backend API
+
+Build the complete backend API for managing 2,402 TPS (polling stations) across 12 districts in Kabupaten Sukoharjo for PAN.
+
+## Existing Codebase
+
+- **Laravel 13** with **Sanctum v4** auth already working
+- User model with `HasApiTokens`, `SoftDeletes`, `#[Fillable]` attribute
+- Existing patterns: thin controllers, Form Requests, API Resources, `fake()` in factories
+- MySQL database (`octalectzz_tps-management`)
+- Validation uses **string pipe notation** (existing convention)
+
+## User Review Required
+
+> [!IMPORTANT]
+> **New dependency required:** `maatwebsite/excel` must be installed via `composer require maatwebsite/excel` for the XLS import feature. This is a well-established Laravel package.
+
+> [!WARNING]
+> **Soft deletes on `tps` table only.** The user requested `destroy()` with soft delete on PollingStation. Other models use hard delete. Confirm this is intended.
+
+## Open Questions
+
+> [!IMPORTANT]
+> **Response format:** The existing AuthController uses plain `response()->json()` without a consistent wrapper. The request asks for `{success, data, message, meta}` format. I'll introduce a `ApiResponse` trait on the base Controller to standardize this going forward without modifying existing auth endpoints.
+
+> [!NOTE]
+> **Table naming:** The request uses `tps` as the table name but `PollingStation` as the model. I'll use `polling_stations` as the table name following Laravel convention, with the model named `PollingStation`.
+
+## Proposed Changes
+
+### Phase 1 — Install Dependencies
+
+#### [MODIFY] [composer.json](file:///c:/Experience/projects/tps-management/tps-management-backend/composer.json)
+- Add `maatwebsite/excel` to `require`
+- Run `composer require maatwebsite/excel`
+
+---
+
+### Phase 2 — PHP Enums
+
+#### [NEW] app/Enums/PollingStationStatus.php
+```php
+enum PollingStationStatus: string
+{
+    case Active = 'active';
+    case Inactive = 'inactive';
+    case Review = 'review';
+}
+```
+
+#### [NEW] app/Enums/OfficerRole.php
+```php
+enum OfficerRole: string
+{
+    case Coordinator = 'coordinator';
+    case Kpps = 'kpps';
+    case Witness = 'witness';
+    case Observer = 'observer';
+}
+```
+
+#### [NEW] app/Enums/OfficerStatus.php
+```php
+enum OfficerStatus: string
+{
+    case Active = 'active';
+    case Inactive = 'inactive';
+}
+```
+
+#### [NEW] app/Enums/ConfirmationStatus.php
+```php
+enum ConfirmationStatus: string
+{
+    case Confirmed = 'confirmed';
+    case Pending = 'pending';
+    case Absent = 'absent';
+}
+```
+
+---
+
+### Phase 3 — Migrations (ordered by FK dependencies)
+
+#### [NEW] create_districts_table migration
+- `id`, `code` (string, unique, indexed), `name` (string), `geojson_key` (string, nullable), `timestamps`
+
+#### [NEW] create_villages_table migration
+- `id`, `district_id` FK → districts (constrained, cascadeOnDelete), `code` (string, unique, indexed), `name`, `timestamps`
+
+#### [NEW] create_polling_stations_table migration
+- `id`, `village_id` FK, `district_id` FK, `station_number` (integer, indexed), `venue_name` (varchar 200), `address` (text), `latitude` (decimal 10,8 nullable), `longitude` (decimal 11,8 nullable), `status` (string, default 'active', indexed), `notes` (text nullable), `softDeletes`, `timestamps`
+- Composite index on `[district_id, status]`
+- Unique constraint on `[village_id, station_number]`
+
+#### [NEW] create_officers_table migration
+- `id`, `name`, `phone` (indexed), `email` (nullable), `role` (string, indexed), `district_id` FK nullable, `status` (string, default 'active', indexed), `timestamps`
+
+#### [NEW] create_assignments_table migration
+- `id`, `polling_station_id` FK, `officer_id` FK, `role` (string), `confirmation_status` (string, default 'pending'), `notes` (text nullable), `assigned_at` (timestamp), `confirmed_at` (timestamp nullable), `timestamps`
+- Unique constraint on `[polling_station_id, officer_id]`
+
+#### [NEW] create_vote_results_table migration
+- `id`, `polling_station_id` FK (unique), `party_votes` (integer), `total_votes` (integer), `dpt` (integer), `voters_present` (integer), `submitted_by` FK → users, `submitted_at` (timestamp), `verified` (boolean, default false), `timestamps`
+
+---
+
+### Phase 4 — Models (with relationships, scopes, casts)
+
+#### [NEW] app/Models/District.php
+- `$fillable`: code, name, geojson_key
+- Relationships: `villages(): HasMany`, `pollingStations(): HasMany`
+- Accessors: village_count, polling_station_count via `withCount`
+
+#### [NEW] app/Models/Village.php
+- `$fillable`: district_id, code, name
+- Relationships: `district(): BelongsTo`, `pollingStations(): HasMany`
+
+#### [NEW] app/Models/PollingStation.php
+- `$fillable`: village_id, district_id, station_number, venue_name, address, latitude, longitude, status, notes
+- `SoftDeletes` trait
+- `casts()`: status → PollingStationStatus, latitude → decimal:8, longitude → decimal:8
+- `$attributes`: status defaults to 'active'
+- Relationships: `village(): BelongsTo`, `district(): BelongsTo`, `assignments(): HasMany`, `officers()` (through assignments), `voteResult(): HasOne`
+- Scopes: `scopeActive()`, `scopeByDistrict($id)`, `scopeWithoutOfficer()`
+
+#### [NEW] app/Models/Officer.php
+- `$fillable`: name, phone, email, role, district_id, status
+- `casts()`: role → OfficerRole, status → OfficerStatus
+- `$attributes`: status defaults to 'active'
+- Relationships: `district(): BelongsTo`, `assignments(): HasMany`
+
+#### [NEW] app/Models/Assignment.php
+- `$fillable`: polling_station_id, officer_id, role, confirmation_status, notes, assigned_at, confirmed_at
+- `casts()`: role → OfficerRole, confirmation_status → ConfirmationStatus, assigned_at → datetime, confirmed_at → datetime
+- `$attributes`: confirmation_status defaults to 'pending'
+- Relationships: `pollingStation(): BelongsTo`, `officer(): BelongsTo`
+
+#### [NEW] app/Models/VoteResult.php
+- `$fillable`: polling_station_id, party_votes, total_votes, dpt, voters_present, submitted_by, submitted_at, verified
+- `casts()`: verified → boolean, submitted_at → datetime
+- Relationships: `pollingStation(): BelongsTo`, `submitter(): BelongsTo` (User)
+
+---
+
+### Phase 5 — Factories & Seeders
+
+#### [NEW] database/factories/DistrictFactory.php
+#### [NEW] database/factories/VillageFactory.php
+#### [NEW] database/factories/PollingStationFactory.php
+#### [NEW] database/factories/OfficerFactory.php
+#### [NEW] database/factories/AssignmentFactory.php
+#### [NEW] database/factories/VoteResultFactory.php
+
+#### [NEW] database/seeders/DistrictSeeder.php
+- Seeds all 12 Sukoharjo districts: GATAK, BULU, POLOKARTO, KARTASURA, TAWANGSARI, MOJOLABAN, SUKOHARJO, GROGOL, WERU, BENDOSARI, BAKI, NGUTER
+- Generates district codes (e.g., `33.11.01`)
+
+#### [MODIFY] [DatabaseSeeder.php](file:///c:/Experience/projects/tps-management/tps-management-backend/database/seeders/DatabaseSeeder.php)
+- Call DistrictSeeder
+
+---
+
+### Phase 6 — API Response Trait & Services
+
+#### [NEW] app/Traits/ApiResponse.php
+- `successResponse($data, $message, $statusCode, $meta)` → `{success: true, data, message, meta}`
+- `errorResponse($message, $statusCode, $errors)` → `{success: false, message, errors}`
+
+#### [NEW] app/Services/PollingStationService.php
+- `getFilteredList($filters)`: handles district_id, village_id, status, search filters with pagination, eager loads district/village, uses `withCount('assignments')`
+- `create($data)`: creates polling station
+- `update(PollingStation, $data)`: updates
+- `delete(PollingStation)`: soft deletes
+- `getMapData($filters)`: returns GeoJSON-like collection
+- `getExportData($filters)`: returns filtered query for Excel export
+
+#### [NEW] app/Services/ImportService.php
+- `importPollingStations(UploadedFile)`: delegates to PollingStationImport, returns summary
+- Error handling and validation of uploaded file
+
+#### [NEW] app/Services/DashboardService.php
+- `getStats()`: total_tps, active_tps, covered_tps, total_officers, assignment_completion_rate, by_district breakdown
+- Uses efficient aggregate queries with `withCount` and conditional counts
+
+---
+
+### Phase 7 — Form Requests
+
+#### [NEW] app/Http/Requests/StorePollingStationRequest.php
+- Rules: village_id (required, exists), district_id (required, exists), station_number (required, integer), venue_name (required, max:200), address (required), latitude/longitude (nullable, numeric), status (nullable, in enum values), notes (nullable)
+- Unique constraint: station_number per village
+
+#### [NEW] app/Http/Requests/UpdatePollingStationRequest.php
+- Same rules with `sometimes` modifier, unique constraint ignores current record
+
+#### [NEW] app/Http/Requests/ImportPollingStationRequest.php
+- Rules: file (required, mimes:xls,xlsx, max:10240)
+
+#### [NEW] app/Http/Requests/StoreOfficerRequest.php
+#### [NEW] app/Http/Requests/UpdateOfficerRequest.php
+#### [NEW] app/Http/Requests/StoreAssignmentRequest.php
+#### [NEW] app/Http/Requests/UpdateAssignmentRequest.php
+#### [NEW] app/Http/Requests/StoreVoteResultRequest.php
+#### [NEW] app/Http/Requests/UpdateVoteResultRequest.php
+
+---
+
+### Phase 8 — API Resources
+
+#### [NEW] app/Http/Resources/DistrictResource.php
+- id, code, name, geojson_key, villages_count, polling_stations_count, created_at
+
+#### [NEW] app/Http/Resources/VillageResource.php
+- id, code, name, district (condensed), polling_stations_count, created_at
+
+#### [NEW] app/Http/Resources/PollingStationResource.php
+- id, station_number, venue_name, address, district{id,name}, village{id,name}, status, latitude, longitude, notes, officers_count (from assignments_count), created_at
+
+#### [NEW] app/Http/Resources/OfficerResource.php
+- id, name, phone, email, role, district{id,name}, status, assignments_count, created_at
+
+#### [NEW] app/Http/Resources/AssignmentResource.php
+- id, polling_station (condensed), officer (condensed), role, confirmation_status, notes, assigned_at, confirmed_at
+
+#### [NEW] app/Http/Resources/VoteResultResource.php
+- id, polling_station (condensed), party_votes, total_votes, dpt, voters_present, submitter{id,name}, submitted_at, verified
+
+#### [NEW] app/Http/Resources/DashboardResource.php
+- All stats fields formatted
+
+---
+
+### Phase 9 — Controllers
+
+#### [NEW] app/Http/Controllers/PollingStationController.php
+- Constructor-injects `PollingStationService`
+- `index()`: paginated, filtered list
+- `store(StorePollingStationRequest)`: create via service
+- `show(PollingStation)`: with officers/assignments eager loaded
+- `update(UpdatePollingStationRequest, PollingStation)`: update via service
+- `destroy(PollingStation)`: soft delete via service
+- `import(ImportPollingStationRequest)`: delegates to ImportService
+- `mapData(Request)`: GeoJSON-like response
+- `export(Request)`: Excel download via Maatwebsite/Excel
+
+#### [NEW] app/Http/Controllers/DistrictController.php
+- `index()`: all districts with village_count, polling_station_count
+- `show(District)`: with villages eager loaded
+
+#### [NEW] app/Http/Controllers/VillageController.php
+- `index(Request)`: filtered by district_id, with polling_station_count
+- `show(Village)`: with polling_station_count
+
+#### [NEW] app/Http/Controllers/OfficerController.php
+- Full CRUD with filters (district_id, role, status)
+
+#### [NEW] app/Http/Controllers/AssignmentController.php
+- Full CRUD + `confirm(Assignment)` PATCH endpoint
+
+#### [NEW] app/Http/Controllers/VoteResultController.php
+- `index()`: with aggregation by district
+- `store()`, `update()`
+
+#### [NEW] app/Http/Controllers/DashboardController.php
+- `index()`: returns all dashboard stats
+
+---
+
+### Phase 10 — Routes & Import/Export Classes
+
+#### [MODIFY] [api.php](file:///c:/Experience/projects/tps-management/tps-management-backend/routes/api.php)
+- Group under `middleware('auth:sanctum')`
+- `apiResource` for: polling-stations, districts, villages, officers, assignments, vote-results
+- Extra routes: `POST polling-stations/import`, `GET polling-stations/map-data`, `GET polling-stations/export`
+- `PATCH assignments/{assignment}/confirm`
+- `GET dashboard`
+
+#### [NEW] app/Imports/PollingStationImport.php
+- Implements `ToCollection`, `WithHeadingRow` or raw row access
+- Handles merged-cell carry-forward for district/village columns
+- Skips header and "JUMLAH" summary rows
+- Uses `firstOrCreate` for districts and villages
+- Returns import summary array
+
+#### [NEW] app/Exports/PollingStationExport.php
+- Implements `FromQuery`, `WithHeadings`, `WithMapping`
+- Accepts filter parameters
+- Exports filtered polling station data
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. `php artisan migrate:fresh` — verify all migrations run cleanly
+2. `php artisan db:seed` — verify seeders work
+3. `php artisan route:list --path=api` — verify all routes registered correctly
+4. `vendor/bin/pint --dirty --format agent` — verify code style
+5. Feature tests for critical endpoints (CRUD, import, dashboard)
+
+### Manual Verification
+- Test API endpoints via the running dev server
+- Verify response format consistency across all endpoints
