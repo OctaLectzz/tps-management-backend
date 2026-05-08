@@ -11,11 +11,6 @@ use Maatwebsite\Excel\Concerns\WithMapping;
 class PollingStationExport implements FromQuery, WithHeadings, WithMapping
 {
     /**
-     * @param  array{district_id?: int, village_id?: int, status?: string}  $filters
-     */
-    public function __construct(private array $filters = []) {}
-
-    /**
      * Build the query for the export.
      */
     public function query(): Builder
@@ -23,31 +18,25 @@ class PollingStationExport implements FromQuery, WithHeadings, WithMapping
         return PollingStation::query()
             ->with(['district:id,name', 'village:id,name'])
             ->withCount('assignments')
-            ->when($this->filters['district_id'] ?? null, fn (Builder $q, int $id) => $q->where('district_id', $id))
-            ->when($this->filters['village_id'] ?? null, fn (Builder $q, int $id) => $q->where('village_id', $id))
-            ->when($this->filters['status'] ?? null, fn (Builder $q, string $s) => $q->where('status', $s))
             ->latest();
     }
 
-    /**
-     * Define the column headings.
-     *
-     * @return list<string>
-     */
     public function headings(): array
     {
         return [
-            'ID',
-            'District',
-            'Village',
-            'Station Number',
-            'Venue Name',
-            'Address',
-            'Latitude',
-            'Longitude',
-            'Status',
-            'Officers Assigned',
-            'Notes',
+            'id',
+            'district',
+            'village',
+            'station_number',
+            'venue_name',
+            'address',
+            'latitude',
+            'longitude',
+            'status',
+            'notes',
+            'deleted_at',
+            'created_at',
+            'updated_at',
         ];
     }
 
@@ -69,8 +58,10 @@ class PollingStationExport implements FromQuery, WithHeadings, WithMapping
             $station->latitude,
             $station->longitude,
             $station->status->value,
-            $station->assignments_count,
             $station->notes,
+            $station->deleted_at?->format('Y-m-d H:i:s'),
+            $station->created_at?->format('Y-m-d H:i:s'),
+            $station->updated_at?->format('Y-m-d H:i:s'),
         ];
     }
 }

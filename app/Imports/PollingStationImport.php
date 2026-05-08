@@ -2,6 +2,7 @@
 
 namespace App\Imports;
 
+use App\Enums\PollingStationStatus;
 use App\Models\District;
 use App\Models\PollingStation;
 use App\Models\Village;
@@ -15,143 +16,144 @@ class PollingStationImport implements ToCollection
 
     private int $skippedCount = 0;
 
-    /** @var list<string> */
     private array $errors = [];
 
-    /**
-     * Process the imported collection of rows.
-     *
-     * Handles merged-cell carry-forward for district and village columns.
-     * Expected columns: B = district, C/D = village, E = station_number, F = venue_name, G = address.
-     */
+    // Cache untuk mempercepat proses & mencegah N+1 Query
+    private array $districtCache = [];
+
+    private array $villageCache = [];
+
     public function collection(Collection $rows): void
     {
-        $currentDistrict = null;
-        $currentVillage = null;
-
         foreach ($rows as $index => $row) {
-            // Skip header rows (first few rows) and empty rows
-            if ($index < 2 || $this->isEmptyRow($row)) {
-                $this->skippedCount++;
+            // Skip header (index 0)
+            if ($index === 0 || $this->isEmptyRow($row)) {
+                if ($index === 0) {
+                    $this->skippedCount++;
+                }
 
                 continue;
             }
 
-            // Skip summary rows containing "JUMLAH"
-            if ($this->isSummaryRow($row)) {
-                $this->skippedCount++;
+            // Extract values based on image columns
+            $districtName = Str::upper($this->cleanValue($row[1] ?? ''));
+            $villageName = Str::upper($this->cleanValue($row[2] ?? ''));
+            $stationNumber = (int) $this->cleanValue($row[3] ?? 0);
+            $venueName = $this->cleanValue($row[4] ?? '');
+            $address = $this->cleanValue($row[5] ?? '');
+            $latitude = $this->cleanValue($row[6] ?? null);
+            $longitude = $this->cleanValue($row[7] ?? null);
+            $status = Str::lower($this->cleanValue($row[8] ?? 'active'));
+            $notes = $this->cleanValue($row[9] ?? null);
 
-                continue;
-            }
-
-            // Carry-forward district from merged cells
-            $districtName = $this->cleanValue($row[1] ?? null);
-            if (! empty($districtName)) {
-                $currentDistrict = $districtName;
-            }
-
-            // Carry-forward village from merged cells (column C or D)
-            $villageName = $this->cleanValue($row[2] ?? $row[3] ?? null);
-            if (! empty($villageName)) {
-                $currentVillage = $villageName;
-            }
-
-            $stationNumber = $this->cleanValue($row[4] ?? null);
-            $venueName = $this->cleanValue($row[5] ?? null);
-            $address = $this->cleanValue($row[6] ?? null);
-
-            // Skip if essential data is missing
-            if (empty($currentDistrict) || empty($currentVillage) || empty($stationNumber)) {
+            // Basic validation
+            if (empty($districtName) || empty($villageName) || $stationNumber <= 0) {
                 $this->skippedCount++;
 
                 continue;
             }
 
             try {
-                $district = District::firstOrCreate(
-                    ['name' => Str::upper($currentDistrict)],
-                    [
-                        'code' => $this->generateDistrictCode($currentDistrict),
-                        'name' => Str::upper($currentDistrict),
-                    ],
-                );
+                // Resolve IDs (with caching)
+                $districtId = $this->resolveDistrict($districtName);
+                $villageId = $this->resolveVillage($villageName, $districtId);
 
-                $village = Village::firstOrCreate(
-                    ['name' => Str::upper($currentVillage), 'district_id' => $district->id],
+                // Insert or Update
+                PollingStation::updateOrCreate(
                     [
-                        'code' => $this->generateVillageCode($district, $currentVillage),
-                        'district_id' => $district->id,
-                        'name' => Str::upper($currentVillage),
-                    ],
-                );
-
-                PollingStation::firstOrCreate(
-                    [
-                        'village_id' => $village->id,
-                        'station_number' => (int) $stationNumber,
+                        'village_id' => $villageId,
+                        'station_number' => $stationNumber,
                     ],
                     [
-                        'village_id' => $village->id,
-                        'district_id' => $district->id,
-                        'station_number' => (int) $stationNumber,
-                        'venue_name' => $venueName ?? 'TPS '.$stationNumber,
-                        'address' => $address ?? '-',
-                    ],
+                        'district_id' => $districtId,
+                        'venue_name' => $venueName ?: 'TPS '.$stationNumber,
+                        'address' => $address ?: '-',
+                        'latitude' => $latitude,
+                        'longitude' => $longitude,
+                        'status' => PollingStationStatus::tryFrom($status) ?? PollingStationStatus::Active,
+                        'notes' => $notes,
+                    ]
                 );
 
                 $this->importedCount++;
             } catch (\Throwable $e) {
-                $this->errors[] = "Row {$index}: {$e->getMessage()}";
+                $this->errors[] = "Row {$index} (TPS {$stationNumber}): {$e->getMessage()}";
                 $this->skippedCount++;
             }
         }
     }
 
-    /**
-     * Get the number of successfully imported records.
-     */
+    private function resolveDistrict(string $name): string
+    {
+        // Gunakan cache memory untuk memotong Query ke database
+        if (isset($this->districtCache[$name])) {
+            return $this->districtCache[$name];
+        }
+
+        $district = District::where('name', $name)->first();
+
+        if (! $district) {
+            // Asumsi format 'id' di schema anda adalah char(7) (misal: 3311001)
+            $count = District::count() + 1;
+            $generatedId = sprintf('3311%03d', $count);
+
+            $district = District::create([
+                'id' => $generatedId,
+                'name' => $name,
+            ]);
+        }
+
+        $this->districtCache[$name] = $district->id;
+
+        return $district->id;
+    }
+
+    private function resolveVillage(string $name, string $districtId): string
+    {
+        $cacheKey = $districtId.'_'.$name;
+        if (isset($this->villageCache[$cacheKey])) {
+            return $this->villageCache[$cacheKey];
+        }
+
+        $village = Village::where('district_id', $districtId)->where('name', $name)->first();
+
+        if (! $village) {
+            // Asumsi format 'id' desa adalah char(10) (misal: 3311001001)
+            $count = Village::where('district_id', $districtId)->count() + 1;
+            $generatedId = sprintf('%s%03d', $districtId, $count);
+
+            $village = Village::create([
+                'id' => $generatedId,
+                'district_id' => $districtId,
+                'name' => $name,
+            ]);
+        }
+
+        $this->villageCache[$cacheKey] = $village->id;
+
+        return $village->id;
+    }
+
     public function getImportedCount(): int
     {
         return $this->importedCount;
     }
 
-    /**
-     * Get the number of skipped rows.
-     */
     public function getSkippedCount(): int
     {
         return $this->skippedCount;
     }
 
-    /**
-     * Get any errors encountered during import.
-     *
-     * @return list<string>
-     */
     public function getErrors(): array
     {
         return $this->errors;
     }
 
-    /**
-     * Check if a row is empty (all cells null or empty).
-     */
     private function isEmptyRow(Collection $row): bool
     {
-        return $row->filter(fn ($cell) => ! empty(trim((string) $cell)))->isEmpty();
+        return $row->filter(fn ($cell) => trim((string) $cell) !== '')->isEmpty();
     }
 
-    /**
-     * Check if a row is a summary row (contains "JUMLAH").
-     */
-    private function isSummaryRow(Collection $row): bool
-    {
-        return $row->contains(fn ($cell) => Str::contains(Str::upper((string) $cell), 'JUMLAH'));
-    }
-
-    /**
-     * Clean a cell value by trimming whitespace.
-     */
     private function cleanValue(mixed $value): ?string
     {
         if ($value === null) {
@@ -161,25 +163,5 @@ class PollingStationImport implements ToCollection
         $cleaned = trim((string) $value);
 
         return $cleaned === '' ? null : $cleaned;
-    }
-
-    /**
-     * Generate a district code from the district name.
-     */
-    private function generateDistrictCode(string $name): string
-    {
-        $existing = District::count();
-
-        return sprintf('33.11.%02d', $existing + 1);
-    }
-
-    /**
-     * Generate a village code from the district and village name.
-     */
-    private function generateVillageCode(District $district, string $name): string
-    {
-        $existing = Village::where('district_id', $district->id)->count();
-
-        return sprintf('%s.%04d', $district->code, $existing + 1);
     }
 }

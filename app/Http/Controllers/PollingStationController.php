@@ -155,10 +155,8 @@ class PollingStationController extends Controller
     public function export(Request $request): BinaryFileResponse|JsonResponse
     {
         try {
-            $filters = $request->only(['district_id', 'village_id', 'status']);
-
             return Excel::download(
-                new PollingStationExport($filters),
+                new PollingStationExport,
                 'polling-stations-'.now()->format('Y-m-d').'.xlsx',
             );
         } catch (\Throwable $e) {
