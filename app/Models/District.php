@@ -29,6 +29,16 @@ class District extends Model
      */
     protected $table = 'districts';
 
+    protected $fillable = [
+        'id',
+        'regency_id',
+        'name',
+    ];
+
+    public $incrementing = false;
+
+    protected $keyType = 'string';
+
     /**
      * The attributes that should be hidden for arrays.
      *

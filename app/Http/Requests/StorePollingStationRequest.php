@@ -25,8 +25,8 @@ class StorePollingStationRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'village_id' => 'required|string|exists:villages,id',
-            'district_id' => 'required|string|exists:districts,id',
+            'village_id' => 'required|exists:villages,id',
+            'district_id' => 'required|exists:districts,id',
             'station_number' => [
                 'required',
                 'integer',

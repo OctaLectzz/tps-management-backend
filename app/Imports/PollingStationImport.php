@@ -28,16 +28,12 @@ class PollingStationImport implements ToCollection
         foreach ($rows as $index => $row) {
             // Skip header (index 0)
             if ($index === 0 || $this->isEmptyRow($row)) {
-                if ($index === 0) {
-                    $this->skippedCount++;
-                }
-
                 continue;
             }
 
             // Extract values based on image columns
             $districtName = Str::upper($this->cleanValue($row[1] ?? ''));
-            $villageName = Str::upper($this->cleanValue($row[2] ?? ''));
+            $villageName = $this->normalizeVillageName($this->cleanValue($row[2] ?? ''));
             $stationNumber = (int) $this->cleanValue($row[3] ?? 0);
             $venueName = $this->cleanValue($row[4] ?? '');
             $address = $this->cleanValue($row[5] ?? '');
@@ -111,22 +107,17 @@ class PollingStationImport implements ToCollection
     private function resolveVillage(string $name, string $districtId): string
     {
         $cacheKey = $districtId.'_'.$name;
+
         if (isset($this->villageCache[$cacheKey])) {
             return $this->villageCache[$cacheKey];
         }
 
-        $village = Village::where('district_id', $districtId)->where('name', $name)->first();
+        $village = Village::where('district_id', $districtId)
+            ->whereRaw('UPPER(TRIM(name)) = ?', [$name])
+            ->first();
 
         if (! $village) {
-            // Asumsi format 'id' desa adalah char(10) (misal: 3311001001)
-            $count = Village::where('district_id', $districtId)->count() + 1;
-            $generatedId = sprintf('%s%03d', $districtId, $count);
-
-            $village = Village::create([
-                'id' => $generatedId,
-                'district_id' => $districtId,
-                'name' => $name,
-            ]);
+            throw new \Exception("Desa/Kelurahan tidak ditemukan: {$name} di district_id {$districtId}");
         }
 
         $this->villageCache[$cacheKey] = $village->id;
@@ -163,5 +154,17 @@ class PollingStationImport implements ToCollection
         $cleaned = trim((string) $value);
 
         return $cleaned === '' ? null : $cleaned;
+    }
+
+    private array $villageAliases = [
+        'JATISOBOO' => 'JATISOBO',
+        'BAKI PANDEYAN' => 'BAKIPANDEYAN',
+    ];
+
+    private function normalizeVillageName(?string $name): string
+    {
+        $name = Str::upper(trim((string) $name));
+
+        return $this->villageAliases[$name] ?? $name;
     }
 }

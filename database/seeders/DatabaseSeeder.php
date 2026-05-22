@@ -23,10 +23,11 @@ class DatabaseSeeder extends Seeder
         $this->call([
             UserSeeder::class,
             IndoRegionSeeder::class,
-            PollingStationSeeder::class,
-            OfficerSeeder::class,
-            AssignmentSeeder::class,
-            VoteResultSeeder::class,
+            SukoharjoMissingVillageSeeder::class,
+            // PollingStationSeeder::class,
+            // OfficerSeeder::class,
+            // AssignmentSeeder::class,
+            // VoteResultSeeder::class,
         ]);
     }
 }

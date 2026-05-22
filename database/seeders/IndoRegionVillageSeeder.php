@@ -1,40 +1,32 @@
 <?php
 
-/*
- * This file is part of the IndoRegion package.
- *
- * (c) Azis Hapidin <azishapidin.com | azishapidin@gmail.com>
- *
- */
-
 namespace Database\Seeders;
 
 use AzisHapidin\IndoRegion\RawDataGetter;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class IndoRegionVillageSeeder extends Seeder
 {
-    /**
-     * Run the database seeds.
-     *
-     * @deprecated
-     *
-     * @return void
-     */
     public function run()
     {
-        // Get Data
-        $villages = RawDataGetter::getVillages();
-        $villages = array_filter($villages, fn ($v) => str_starts_with($v['district_id'], '3311'));
+        $villages = collect(RawDataGetter::getVillages())
+            ->filter(fn ($v) => Str::startsWith((string) $v['district_id'], '3311'))
+            ->map(fn ($v) => [
+                'id' => (string) $v['id'],
+                'district_id' => (string) $v['district_id'],
+                'name' => trim((string) $v['name']),
+            ])
+            ->values()
+            ->toArray();
 
-        // Insert Data with Chunk
-        DB::transaction(function () use ($villages) {
-            $collection = collect($villages);
-            $parts = $collection->chunk(1000);
-            foreach ($parts as $subset) {
-                DB::table('villages')->insert($subset->toArray());
-            }
-        });
+        foreach (array_chunk($villages, 1000) as $chunk) {
+            DB::table('villages')->upsert(
+                $chunk,
+                ['id'],
+                ['district_id', 'name']
+            );
+        }
     }
 }
